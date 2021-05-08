@@ -37,7 +37,7 @@ object Interface {
 
     Ref
       .of[F, State](initialState)
-      .map(ref => SyncFSM(ref, modifyStatePerCommand))
+      .map(ref => RefBasedFSM(ref, modifyStatePerCommand))
   }
 
   //with this, we need a Deferred instance to keep track of the async state
@@ -129,7 +129,7 @@ object Interface {
       }
 
       Kleisli.liftF(Deferred[F, Either[Throwable, State]]).flatMap { deferred =>
-        SyncFSM(ref, modifyStatePerCommand(deferred))
+        RefBasedFSM(ref, modifyStatePerCommand(deferred))
       }
     }
   }
