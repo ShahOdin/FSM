@@ -26,7 +26,7 @@ object RefBasedFSM {
 
 - In the case of the state transition being asynchronous, ie, if there is a database layer, so for example:
 
-```
+```scala
   type Potentially[S] = Either[Throwable, S]
   type StateStore[F[_]] = Kleisli[F, State, Potentially[Unit]]
 ```
