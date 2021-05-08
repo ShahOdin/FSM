@@ -1,6 +1,5 @@
 package demo
 
-import cats.data.Kleisli
 import cats.effect.{Async, Deferred, Ref, Sync}
 import cats.syntax.all._
 
@@ -37,19 +36,13 @@ object Interface {
 
     Ref
       .of[F, State](initialState)
-      .map(ref => RefBasedFSM(ref, modifyStatePerCommand))
+      .map(ref => SyncFSM(ref, modifyStatePerCommand))
   }
 
   //with this, we need a Deferred instance to keep track of the async state
   def withAsyncTransition[F[_]: Async](
       initialState: State
   ): F[DemoInterface[F]] = {
-    sealed trait AsyncState[S]
-    object AsyncState {
-      case class Value[S](state: S) extends AsyncState[S]
-      case class Updating[S](asyncState: Deferred[F, Either[Throwable, S]])
-          extends AsyncState[S]
-    }
 
     def updateStoreAndPerformSideEffects(
         ref: Ref[F, AsyncState[State]],
@@ -81,7 +74,7 @@ object Interface {
       ref <- Ref.of[F, AsyncState[State]](AsyncState.Value(initialState))
     } yield {
 
-      def modifyStatePerCommand(
+      def givenDeferredModifyStateOnInput(
           deferred: Deferred[F, Potentially[State]]
       ): Command => AsyncState[State] => (
           AsyncState[State],
@@ -103,7 +96,7 @@ object Interface {
               command = c
             )
 
-          case async: AsyncState.Updating[State] =>
+          case async: AsyncState.Updating[State, F] =>
             async -> Log.raiseErrorForSystemBeingBusy(c)
         }
 
@@ -123,14 +116,12 @@ object Interface {
               c
             )
 
-          case async: AsyncState.Updating[State] =>
+          case async: AsyncState.Updating[State, F] =>
             async -> Log.raiseErrorForSystemBeingBusy(c)
         }
       }
 
-      Kleisli.liftF(Deferred[F, Either[Throwable, State]]).flatMap { deferred =>
-        RefBasedFSM(ref, modifyStatePerCommand(deferred))
-      }
+      AsyncFSM(ref, givenDeferredModifyStateOnInput)
     }
   }
 }
