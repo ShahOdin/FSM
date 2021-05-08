@@ -45,7 +45,7 @@ object Interface {
   ): F[DemoInterface[F]] = {
 
     def updateStoreAndPerformSideEffects(
-        ref: Ref[F, AsyncState[State]],
+        ref: Ref[F, LocalState[State]],
         store: StateStore[F]
     )(
         lastState: State,
@@ -62,7 +62,7 @@ object Interface {
         .run(newState)
         .flatTap(_ =>
           deferred.complete(newState.asRight) *> ref
-            .set(AsyncState.Value(newState))
+            .set(LocalState.Value(newState))
         )
         .onError(e =>
           deferred.complete(e.asLeft).void
@@ -71,22 +71,22 @@ object Interface {
 
     for {
       store <- Ref.of[F, State](initialState).map(StateStore.apply[F])
-      ref <- Ref.of[F, AsyncState[State]](AsyncState.Value(initialState))
+      ref <- Ref.of[F, LocalState[State]](LocalState.Value(initialState))
     } yield {
 
       def givenDeferredModifyStateOnInput(
           deferred: Deferred[F, Potentially[State]]
-      ): Command => AsyncState[State] => (
-          AsyncState[State],
+      ): Command => LocalState[State] => (
+          LocalState[State],
           F[Option[Event]]
       ) = {
         case c: Command.Open => {
-          case open @ AsyncState.Value(State.Open(_)) =>
+          case open @ LocalState.Value(State.Open(_)) =>
             open -> Log.logNonAction(c) *> none[Event].pure[F]
 
-          case AsyncState.Value(s: State.Close) =>
+          case LocalState.Value(s: State.Close) =>
             val now = Instant.now()
-            AsyncState.Updating(
+            LocalState.Updating(
               deferred
             ) -> updateStoreAndPerformSideEffects(ref, store)(
               lastState = s,
@@ -96,17 +96,17 @@ object Interface {
               command = c
             )
 
-          case async: AsyncState.Updating[State, F] =>
+          case async: LocalState.Updating[State, F] =>
             async -> Log.raiseErrorForSystemBeingBusy(c)
         }
 
         case c: Command.Close => {
-          case close @ AsyncState.Value(State.Close(_)) =>
+          case close @ LocalState.Value(State.Close(_)) =>
             close -> Log.logNonAction(c) *> none[Event].pure[F]
 
-          case AsyncState.Value(s: State.Open) =>
+          case LocalState.Value(s: State.Open) =>
             val now = Instant.now()
-            AsyncState.Updating(
+            LocalState.Updating(
               deferred
             ) -> updateStoreAndPerformSideEffects(ref, store)(
               lastState = s,
@@ -116,7 +116,7 @@ object Interface {
               c
             )
 
-          case async: AsyncState.Updating[State, F] =>
+          case async: LocalState.Updating[State, F] =>
             async -> Log.raiseErrorForSystemBeingBusy(c)
         }
       }

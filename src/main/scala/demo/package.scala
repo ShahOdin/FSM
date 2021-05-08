@@ -1,4 +1,5 @@
 import cats.data.Kleisli
+import cats.effect.Deferred
 
 package object demo {
 
@@ -10,4 +11,5 @@ package object demo {
 
   type StateStore[F[_]] = Kleisli[F, State, Potentially[Unit]]
 
+  type Fetched[F[_], S] = Deferred[F, Either[Throwable, S]]
 }
