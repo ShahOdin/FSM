@@ -69,7 +69,7 @@ object Interface {
         ) *> eventToBeGenerated.some.pure[F]
 
     for {
-      store <- Ref.of[F, State](initialState).map(FetchRemoteState.apply[F])
+      store <- Ref.of[F, State](initialState).map(UpdateRemoteState.apply[F])
       ref <- Ref.of[F, LocalState[State]](LocalState.Value(initialState))
     } yield {
 

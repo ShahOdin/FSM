@@ -7,7 +7,7 @@ import cats.syntax.all._
 
 import scala.concurrent.duration.DurationInt
 
-object FetchRemoteState {
+object UpdateRemoteState {
   def apply[F[_]: Async](ref: Ref[F, State]): UpdateRemoteState[F] = {
 
     def attemptUpdate(state: State): F[Either[Throwable, Unit]] =
