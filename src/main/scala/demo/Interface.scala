@@ -46,12 +46,12 @@ object Interface {
 
     def updateStoreAndPerformSideEffects(
         ref: Ref[F, LocalState[State]],
-        fetchRemoteState: FetchRemoteState[F]
+        fetchRemoteState: FetchRemoteState[F],
+        deferred: Fetched[F, State]
     )(
         lastState: State,
         eventToBeGenerated: Event,
         newState: State,
-        deferred: Deferred[F, Either[Throwable, State]],
         command: Command
     ): F[Option[Event]] =
       Log.logAttemptToPublishEvent(
@@ -74,9 +74,7 @@ object Interface {
       ref <- Ref.of[F, LocalState[State]](LocalState.Value(initialState))
     } yield {
 
-      def givenDeferredModifyStateOnInput(
-          deferred: Deferred[F, Potentially[State]]
-      ): Command => LocalState[State] => (
+      def modifyStateOnInput: Command => LocalState[State] => (
           LocalState[State],
           F[Option[Event]]
       ) = {
@@ -86,17 +84,17 @@ object Interface {
 
           case LocalState.Value(s: State.Close) =>
             val now = Instant.now()
-            LocalState.Updating(
-              deferred
-            ) -> updateStoreAndPerformSideEffects(ref, store)(
-              lastState = s,
-              eventToBeGenerated = Event.Opened(now),
-              newState = State.Open(now),
-              deferred = deferred,
-              command = c
-            )
+            LocalState.Updating ->
+              Deferred[F, Either[Throwable, State]].flatMap { deferred =>
+                updateStoreAndPerformSideEffects(ref, store, deferred)(
+                  lastState = s,
+                  eventToBeGenerated = Event.Opened(now),
+                  newState = State.Open(now),
+                  command = c
+                )
+              }
 
-          case async: LocalState.Updating[State, F] =>
+          case async: LocalState.Updating.type =>
             async -> Log.raiseErrorForSystemBeingBusy(c)
         }
 
@@ -106,22 +104,22 @@ object Interface {
 
           case LocalState.Value(s: State.Open) =>
             val now = Instant.now()
-            LocalState.Updating(
-              deferred
-            ) -> updateStoreAndPerformSideEffects(ref, store)(
-              lastState = s,
-              eventToBeGenerated = Event.Closed(now),
-              newState = State.Close(now),
-              deferred = deferred,
-              c
-            )
+            LocalState.Updating ->
+              Deferred[F, Either[Throwable, State]].flatMap { deferred =>
+                updateStoreAndPerformSideEffects(ref, store, deferred)(
+                  lastState = s,
+                  eventToBeGenerated = Event.Closed(now),
+                  newState = State.Close(now),
+                  c
+                )
+              }
 
-          case async: LocalState.Updating[State, F] =>
+          case async: LocalState.Updating.type =>
             async -> Log.raiseErrorForSystemBeingBusy(c)
         }
       }
 
-      AsyncFSM(ref, givenDeferredModifyStateOnInput)
+      AsyncFSM(ref, modifyStateOnInput)
     }
   }
 }
