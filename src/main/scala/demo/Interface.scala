@@ -12,24 +12,24 @@ object Interface {
       initialState: State
   ): F[DemoInterface[F]] = {
     def modifyStatePerCommand: Command => State => (State, F[Option[Event]]) = {
-      case c: Command.Open => {
+      case openCommand: Command.Open => {
         case open: State.Open =>
-          open -> Log.logNonAction(c) *> none[Event].pure[F]
+          open -> Log.logNonAction(openCommand) *> none[Event].pure[F]
         case s: State.Close =>
           val now = Instant.now()
           val event: Event = Event.Opened(now)
           State.Open(now) ->
-            Log.logAttemptToPublishEvent(s, event, c) *> event.some
+            Log.acknowledgeCommand(s, openCommand) *> event.some
               .pure[F]
       }
-      case c: Command.Close => {
+      case closeCommand: Command.Close => {
         case close: State.Close =>
-          close -> Log.logNonAction(c) *> none[Event].pure[F]
+          close -> Log.logNonAction(closeCommand) *> none[Event].pure[F]
         case s: State.Open =>
           val now = Instant.now()
           val event: Event = Event.Closed(now)
           State.Close(now) ->
-            Log.logAttemptToPublishEvent(s, event, c) *> event.some
+            Log.acknowledgeCommand(s, closeCommand) *> event.some
               .pure[F]
       }
     }
@@ -46,7 +46,7 @@ object Interface {
 
     def updateStoreAndPerformSideEffects(
         ref: Ref[F, LocalState[State]],
-        fetchRemoteState: FetchRemoteState[F],
+        fetchRemoteState: UpdateRemoteState[F],
         deferred: Fetched[F, State]
     )(
         lastState: State,
@@ -54,9 +54,8 @@ object Interface {
         newState: State,
         command: Command
     ): F[Option[Event]] =
-      Log.logAttemptToPublishEvent(
+      Log.acknowledgeCommand(
         lastState,
-        eventToBeGenerated,
         command
       ) *> fetchRemoteState
         .run(newState)
@@ -65,12 +64,12 @@ object Interface {
             .set(LocalState.Value(newState))
         )
         .onError(e =>
-          deferred.complete(e.asLeft).void
-        ) *> eventToBeGenerated.some
-        .pure[F]
+          deferred.complete(e.asLeft).void *> ref
+            .set(LocalState.Value(lastState))
+        ) *> eventToBeGenerated.some.pure[F]
 
     for {
-      store <- Ref.of[F, State](initialState).map(StateStore.apply[F])
+      store <- Ref.of[F, State](initialState).map(FetchRemoteState.apply[F])
       ref <- Ref.of[F, LocalState[State]](LocalState.Value(initialState))
     } yield {
 

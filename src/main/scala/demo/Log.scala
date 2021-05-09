@@ -9,34 +9,56 @@ import cats.syntax.all._
 
 object Log {
 
-  private def intermittentlyFail[F[_]: Sync, I](
-      command: I
-  ): Unit => F[Unit] =
-    _ =>
-      if (Random.nextInt(10) < 7)
-        println(
-          s"${Console.YELLOW} Failed to log, for command: $command ${Console.RESET}"
-        ).pure[F] *> new Exception("Boom!").raiseError[F, Unit]
-      else
-        Applicative[F].unit
+  def logSuccessToUpdateStore[F[_]: Sync](updateTo: State): F[Unit] =
+    Sync[F].delay {
+      println(
+        s"${Console.GREEN} successfully updated store with: $updateTo ${Console.RESET}"
+      )
+    }
 
-  def logAttemptToPublishEvent[F[_]: Sync, I, S, O](
+  private def intermittentlyFail[F[_]: Sync](message: String): F[Unit] =
+    Sync[F]
+      .delay(
+        if (Random.nextInt(10) < 7)
+          println(message).pure[F] *> new Exception("Boom!").raiseError[F, Unit]
+        else
+          Applicative[F].unit
+      )
+      .flatten
+
+  def intermittentlyFailToUpdateRemoteStore[F[_]: Sync, S](
+      updateTo: S
+  ): F[Unit] = {
+    intermittentlyFail(
+      s"${Console.RED} Failed to update store with: $updateTo ${Console.RESET}"
+    )
+  }
+
+  private def intermittentlyFailToAcknowledgeCommand[F[_]: Sync, I](
+      command: I
+  ): F[Unit] =
+    intermittentlyFail(
+      s"${Console.YELLOW} Failed to acknowledge command: $command ${Console.RESET}"
+    )
+
+  def acknowledgeCommand[F[_]: Sync, I, S](
       lastState: S,
-      event: O,
       command: I
   ): F[Unit] =
     Sync[F]
       .handleErrorWith(
         println(
-          s"${Console.YELLOW} attempting to publish $event requested by command: $command ${Console.RESET}"
+          s"${Console.YELLOW} acknowledging command: $command. last state is: ${lastState} ${Console.RESET}"
         ).pure[F]
-          .flatTap(intermittentlyFail(command))
+          .flatTap(_ =>
+            intermittentlyFailToAcknowledgeCommand(command).whenA(false)
+          )
           .flatTap(_ =>
             println(
-              s"${Console.GREEN} succeeded in publishing $event, requested by command $command. Previous state was: $lastState ${Console.RESET}"
+              s"${Console.GREEN} succeeded in processing command $command. Previous state was: $lastState ${Console.RESET}"
             ).pure[F]
           )
-      )(_ => logAttemptToPublishEvent(lastState, event, command))
+      )(_ => acknowledgeCommand(lastState, command))
 
   def logRetry[F[_]: Sync](e: Throwable): F[Unit] =
     Sync[F]
@@ -51,7 +73,7 @@ object Log {
     Sync[F]
       .delay(
         println(
-          s"${Console.CYAN} received a command: $command to change state it matched the current state. ignoring...${Console.RESET}"
+          s"${Console.CYAN} received a command: $command to update the state, but it matched the current state. ignoring...${Console.RESET}"
         )
       )
 

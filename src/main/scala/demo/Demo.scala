@@ -17,12 +17,12 @@ object Demo extends IOApp {
       .handleErrorWith(
         interface
           .run(command)
+          .flatTap(_.traverse(event => events.append(event).pure[F]))
           .onError {
             case e =>
               Log.logRetry(e)
           }
       )(_ => requestTransitionWithRetry(interface, command))
-      .flatTap(_.traverse(e => events.append(e).pure[F]))
 
   override def run(args: List[String]): IO[ExitCode] =
     for {
@@ -33,12 +33,12 @@ object Demo extends IOApp {
       _ <- (
           requestTransitionWithRetry(interface, Command.Open(1)),
           requestTransitionWithRetry(interface, Command.Open(2))
-      ).parTupled
+      ).parTupled.flatMap { _ =>
+        requestTransitionWithRetry(interface, Command.Open(3)) *>
+          requestTransitionWithRetry(interface, Command.Close(4)) *>
+          requestTransitionWithRetry(interface, Command.Close(5))
+      }
 
-      _ <- requestTransitionWithRetry(interface, Command.Open(3))
-      _ <- requestTransitionWithRetry(interface, Command.Close(4))
-      _ <- requestTransitionWithRetry(interface, Command.Close(5))
-
-      _ <- IO(println(s"events received: ${events.toList.mkString(",")}"))
+      _ <- IO(println(s"events received: ${events.toList.length}"))
     } yield ExitCode.Success
 }
