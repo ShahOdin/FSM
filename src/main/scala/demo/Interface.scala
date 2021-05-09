@@ -46,7 +46,7 @@ object Interface {
 
     def updateStoreAndPerformSideEffects(
         ref: Ref[F, LocalState[State]],
-        store: StateStore[F]
+        fetchRemoteState: FetchRemoteState[F]
     )(
         lastState: State,
         eventToBeGenerated: Event,
@@ -58,7 +58,7 @@ object Interface {
         lastState,
         eventToBeGenerated,
         command
-      ) *> store
+      ) *> fetchRemoteState
         .run(newState)
         .flatTap(_ =>
           deferred.complete(newState.asRight) *> ref

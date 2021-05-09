@@ -9,7 +9,7 @@ package object demo {
 
   type DemoInterface[F[_]] = FSM[F, Command, Option[Event]]
 
-  type StateStore[F[_]] = Kleisli[F, State, Potentially[Unit]]
+  type FetchRemoteState[F[_]] = Kleisli[F, State, Potentially[Unit]]
 
   type Fetched[F[_], S] = Deferred[F, Either[Throwable, S]]
 }

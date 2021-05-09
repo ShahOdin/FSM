@@ -8,7 +8,7 @@ import cats.syntax.all._
 import scala.concurrent.duration.DurationInt
 
 object StateStore {
-  def apply[F[_]: Async](ref: Ref[F, State]): StateStore[F] =
+  def apply[F[_]: Async](ref: Ref[F, State]): FetchRemoteState[F] =
     Kleisli { state =>
       Temporal[F].sleep(2.seconds) *> ref
         .set(state)
