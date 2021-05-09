@@ -1,4 +1,5 @@
 import cats.data.Kleisli
+import cats.effect.Deferred
 
 package object demo {
 
@@ -8,6 +9,7 @@ package object demo {
 
   type DemoInterface[F[_]] = FSM[F, Command, Option[Event]]
 
-  type StateStore[F[_]] = Kleisli[F, State, Potentially[Unit]]
+  type UpdateRemoteState[F[_]] = Kleisli[F, State, Potentially[Unit]]
 
+  type Fetched[F[_], S] = Deferred[F, Either[Throwable, S]]
 }

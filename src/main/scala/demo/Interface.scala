@@ -1,6 +1,5 @@
 package demo
 
-import cats.data.Kleisli
 import cats.effect.{Async, Deferred, Ref, Sync}
 import cats.syntax.all._
 
@@ -13,124 +12,119 @@ object Interface {
       initialState: State
   ): F[DemoInterface[F]] = {
     def modifyStatePerCommand: Command => State => (State, F[Option[Event]]) = {
-      case c: Command.Open => {
+      case openCommand: Command.Open => {
         case open: State.Open =>
-          open -> Log.logNonAction(c) *> none[Event].pure[F]
+          open -> Log.logNonAction(openCommand) *> none[Event].pure[F]
         case s: State.Close =>
           val now = Instant.now()
           val event: Event = Event.Opened(now)
           State.Open(now) ->
-            Log.logAttemptToPublishEvent(s, event, c) *> event.some
+            Log.acknowledgeCommand(s, openCommand) *> event.some
               .pure[F]
       }
-      case c: Command.Close => {
+      case closeCommand: Command.Close => {
         case close: State.Close =>
-          close -> Log.logNonAction(c) *> none[Event].pure[F]
+          close -> Log.logNonAction(closeCommand) *> none[Event].pure[F]
         case s: State.Open =>
           val now = Instant.now()
           val event: Event = Event.Closed(now)
           State.Close(now) ->
-            Log.logAttemptToPublishEvent(s, event, c) *> event.some
+            Log.acknowledgeCommand(s, closeCommand) *> event.some
               .pure[F]
       }
     }
 
     Ref
       .of[F, State](initialState)
-      .map(ref => RefBasedFSM(ref, modifyStatePerCommand))
+      .map(ref => SyncFSM(ref, modifyStatePerCommand))
   }
 
   //with this, we need a Deferred instance to keep track of the async state
   def withAsyncTransition[F[_]: Async](
       initialState: State
   ): F[DemoInterface[F]] = {
-    sealed trait AsyncState[S]
-    object AsyncState {
-      case class Value[S](state: S) extends AsyncState[S]
-      case class Updating[S](asyncState: Deferred[F, Either[Throwable, S]])
-          extends AsyncState[S]
-    }
 
     def updateStoreAndPerformSideEffects(
-        ref: Ref[F, AsyncState[State]],
-        store: StateStore[F]
+        ref: Ref[F, LocalState[State]],
+        fetchRemoteState: UpdateRemoteState[F],
+        deferred: Fetched[F, State]
     )(
         lastState: State,
         eventToBeGenerated: Event,
         newState: State,
-        deferred: Deferred[F, Either[Throwable, State]],
         command: Command
     ): F[Option[Event]] =
-      Log.logAttemptToPublishEvent(
+      Log.acknowledgeCommand(
         lastState,
-        eventToBeGenerated,
         command
-      ) *> store
+      ) *> fetchRemoteState
         .run(newState)
         .flatTap(_ =>
           deferred.complete(newState.asRight) *> ref
-            .set(AsyncState.Value(newState))
+            .set(LocalState.Value(newState))
         )
         .onError(e =>
-          deferred.complete(e.asLeft).void
-        ) *> eventToBeGenerated.some
-        .pure[F]
+          deferred.complete(e.asLeft).void *> ref
+            .set(LocalState.Value(lastState))
+        ) *> eventToBeGenerated.some.pure[F]
 
     for {
-      store <- Ref.of[F, State](initialState).map(StateStore.apply[F])
-      ref <- Ref.of[F, AsyncState[State]](AsyncState.Value(initialState))
+      store <- Ref.of[F, State](initialState).map(UpdateRemoteState.apply[F])
+      ref <- Ref.of[F, LocalState[State]](LocalState.Value(initialState))
     } yield {
 
-      def modifyStatePerCommand(
-          deferred: Deferred[F, Potentially[State]]
-      ): Command => AsyncState[State] => (
-          AsyncState[State],
+      def modifyStateOnInput: Command => LocalState[State] => (
+          LocalState[State],
           F[Option[Event]]
       ) = {
-        case c: Command.Open => {
-          case open @ AsyncState.Value(State.Open(_)) =>
-            open -> Log.logNonAction(c) *> none[Event].pure[F]
+        case openCommand: Command.Open => {
+          case open @ LocalState.Value(State.Open(_)) =>
+            open -> Log.logNonAction(openCommand) *> none[Event].pure[F]
 
-          case AsyncState.Value(s: State.Close) =>
+          case LocalState.Value(s: State.Close) =>
             val now = Instant.now()
-            AsyncState.Updating(
-              deferred
-            ) -> updateStoreAndPerformSideEffects(ref, store)(
-              lastState = s,
-              eventToBeGenerated = Event.Opened(now),
-              newState = State.Open(now),
-              deferred = deferred,
-              command = c
-            )
+            LocalState.Updating(openCommand) ->
+              Deferred[F, Either[Throwable, State]].flatMap { deferred =>
+                updateStoreAndPerformSideEffects(ref, store, deferred)(
+                  lastState = s,
+                  eventToBeGenerated = Event.Opened(now),
+                  newState = State.Open(now),
+                  command = openCommand
+                )
+              }
 
-          case async: AsyncState.Updating[State] =>
-            async -> Log.raiseErrorForSystemBeingBusy(c)
+          case async @ LocalState.Updating(runningCommand) =>
+            async -> Log.raiseErrorForSystemBeingBusy(
+              openCommand,
+              runningCommand
+            )
         }
 
-        case c: Command.Close => {
-          case close @ AsyncState.Value(State.Close(_)) =>
-            close -> Log.logNonAction(c) *> none[Event].pure[F]
+        case closeCommand: Command.Close => {
+          case close @ LocalState.Value(State.Close(_)) =>
+            close -> Log.logNonAction(closeCommand) *> none[Event].pure[F]
 
-          case AsyncState.Value(s: State.Open) =>
+          case LocalState.Value(s: State.Open) =>
             val now = Instant.now()
-            AsyncState.Updating(
-              deferred
-            ) -> updateStoreAndPerformSideEffects(ref, store)(
-              lastState = s,
-              eventToBeGenerated = Event.Closed(now),
-              newState = State.Close(now),
-              deferred = deferred,
-              c
-            )
+            LocalState.Updating(closeCommand) ->
+              Deferred[F, Either[Throwable, State]].flatMap { deferred =>
+                updateStoreAndPerformSideEffects(ref, store, deferred)(
+                  lastState = s,
+                  eventToBeGenerated = Event.Closed(now),
+                  newState = State.Close(now),
+                  closeCommand
+                )
+              }
 
-          case async: AsyncState.Updating[State] =>
-            async -> Log.raiseErrorForSystemBeingBusy(c)
+          case async @ LocalState.Updating(runningCommand) =>
+            async -> Log.raiseErrorForSystemBeingBusy(
+              closeCommand,
+              runningCommand
+            )
         }
       }
 
-      Kleisli.liftF(Deferred[F, Either[Throwable, State]]).flatMap { deferred =>
-        RefBasedFSM(ref, modifyStatePerCommand(deferred))
-      }
+      AsyncFSM(ref, modifyStateOnInput)
     }
   }
 }
