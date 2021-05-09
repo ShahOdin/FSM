@@ -56,8 +56,10 @@ object Log {
       )
 
   def raiseErrorForSystemBeingBusy[F[_]: Sync, I](
-      command: I
+      newCommand: I,
+      runningCommand: I
   ): F[Option[Event]] =
-    new Exception(s"busy, retry command: $command later")
-      .raiseError[F, Option[Event]]
+    new Exception(
+      s"currently running command: ${runningCommand}, will retry command: $newCommand later"
+    ).raiseError[F, Option[Event]]
 }

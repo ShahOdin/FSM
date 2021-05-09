@@ -78,44 +78,50 @@ object Interface {
           LocalState[State],
           F[Option[Event]]
       ) = {
-        case c: Command.Open => {
+        case openCommand: Command.Open => {
           case open @ LocalState.Value(State.Open(_)) =>
-            open -> Log.logNonAction(c) *> none[Event].pure[F]
+            open -> Log.logNonAction(openCommand) *> none[Event].pure[F]
 
           case LocalState.Value(s: State.Close) =>
             val now = Instant.now()
-            LocalState.Updating ->
+            LocalState.Updating(openCommand) ->
               Deferred[F, Either[Throwable, State]].flatMap { deferred =>
                 updateStoreAndPerformSideEffects(ref, store, deferred)(
                   lastState = s,
                   eventToBeGenerated = Event.Opened(now),
                   newState = State.Open(now),
-                  command = c
+                  command = openCommand
                 )
               }
 
-          case async: LocalState.Updating.type =>
-            async -> Log.raiseErrorForSystemBeingBusy(c)
+          case async @ LocalState.Updating(runningCommand) =>
+            async -> Log.raiseErrorForSystemBeingBusy(
+              openCommand,
+              runningCommand
+            )
         }
 
-        case c: Command.Close => {
+        case closeCommand: Command.Close => {
           case close @ LocalState.Value(State.Close(_)) =>
-            close -> Log.logNonAction(c) *> none[Event].pure[F]
+            close -> Log.logNonAction(closeCommand) *> none[Event].pure[F]
 
           case LocalState.Value(s: State.Open) =>
             val now = Instant.now()
-            LocalState.Updating ->
+            LocalState.Updating(closeCommand) ->
               Deferred[F, Either[Throwable, State]].flatMap { deferred =>
                 updateStoreAndPerformSideEffects(ref, store, deferred)(
                   lastState = s,
                   eventToBeGenerated = Event.Closed(now),
                   newState = State.Close(now),
-                  c
+                  closeCommand
                 )
               }
 
-          case async: LocalState.Updating.type =>
-            async -> Log.raiseErrorForSystemBeingBusy(c)
+          case async @ LocalState.Updating(runningCommand) =>
+            async -> Log.raiseErrorForSystemBeingBusy(
+              closeCommand,
+              runningCommand
+            )
         }
       }
 
